@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#e4e8ec">
+<title>Garsónka 3D</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #e4e8ec; font: 15px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #1d2329; }
+  canvas { position: fixed; inset: 0; display: block; touch-action: none; }
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 10px calc(10px + env(safe-area-inset-bottom)); display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; background: linear-gradient(transparent, rgba(228,232,236,.92) 35%); }
+  #bar::-webkit-scrollbar { display: none; }
+  button { flex: none; min-height: 44px; padding: 0 14px; border: 1px solid #c3cbd2; border-radius: 22px; background: #fff; color: inherit; font: inherit; font-weight: 500; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  button.on { background: #1d2329; border-color: #1d2329; color: #fff; }
+  #roof { position: fixed; top: calc(10px + env(safe-area-inset-top)); right: 10px; }
+  #hint { position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 10px; right: 130px; font-size: 13px; color: #4b5560; text-shadow: 0 0 6px rgba(255,255,255,.9); pointer-events: none; }
+  #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="status">Načítavam model…</div>
+<div id="hint">Jeden prst otáča, dva prsty približujú a posúvajú.</div>
+<button id="roof" type="button" aria-pressed="false">Strecha: vyp.</button>
+<nav id="bar" aria-label="Pohľady"></nav>
+
+<script type="importmap">
+{ "imports": { "three": "./lib/three/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from './lib/three/examples/jsm/controls/OrbitControls.js';
+import { GLTFLoader } from './lib/three/examples/jsm/loaders/GLTFLoader.js';
+
+const ROOF_GROUP = 'Strop a strecha';
+const CENTER = [2.885, 2.75, 0.6];
+
+// Model má súradnice z výkresu v metroch: x od ľavej steny, y od nízkej steny, z od podlahy.
+const fromPlan = ([x, y, z]) => new THREE.Vector3(x, z, -y);
+
+const VIEWS = [
+  { id: 'dom',   name: 'Domček',      pos: [7.8, -3.9, 7.4],   look: [2.85, 2.45, 0.35], roof: false, outside: true },
+  { id: 'top',   name: 'Zhora',       pos: [2.885, 2.74, 9],   look: [2.885, 2.75, 0],   roof: false, outside: true },
+  { id: 'obyv',  name: 'Obývačka',    pos: [4.75, 3.12, 1.55], look: [3.05, 0.60, 0.80], roof: true },
+  { id: 'kuch',  name: 'Kuchyňa',     pos: [2.75, 0.95, 1.12], look: [4.75, 3.70, 1.02], roof: true },
+  { id: 'gauc',  name: 'Z gauča',     pos: [5.05, 1.75, 1.08], look: [2.30, 1.90, 1.00], roof: true },
+  { id: 'vstup', name: 'Od vstupu',   pos: [1.00, 5.25, 1.55], look: [3.60, 1.20, 0.80], roof: true },
+];
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 0.92;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xe4e8ec);
+
+const camera = new THREE.PerspectiveCamera(60, 1, 0.02, 80);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.09;
+controls.minDistance = 0.1;
+controls.maxDistance = 30;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xe6dccd, 3.1));
+const sun = new THREE.DirectionalLight(0xfff0dc, 1.15);
+const sunDir = new THREE.Vector3(0.30, -0.60, -0.74).normalize();  // smer svetla v súradniciach webu
+const c = fromPlan(CENTER);
+sun.position.copy(c).addScaledVector(sunDir, -12);
+sun.target.position.copy(c);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -7, right: 7, top: 7, bottom: -7, near: 1, far: 26 });
+sun.shadow.bias = -0.0006;
+sun.shadow.normalBias = 0.02;
+scene.add(sun, sun.target);
+
+// Procedurálne materiály z Blendera sa do GLB neprenesú, textúry sa kreslia tu.
+function rng(seed) {
+  return () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+}
+
+function grain(ctx, x, y, w, h, base, seed, strength = 1) {
+  const r = rng(seed);
+  ctx.fillStyle = base;
+  ctx.fillRect(x, y, w, h);
+  const lines = Math.round(h * 0.75);
+  for (let i = 0; i < lines; i++) {
+    const yy = y + r() * h;
+    const dark = r() < 0.55;
+    ctx.strokeStyle = dark ? `rgba(90,60,30,${(0.02 + r() * 0.1) * strength})` : `rgba(255,240,215,${(0.02 + r() * 0.08) * strength})`;
+    ctx.lineWidth = 0.5 + r() * 1.6;
+    ctx.beginPath();
+    ctx.moveTo(x, yy);
+    const a = (r() - 0.5) * 3, b = (r() - 0.5) * 3;
+    ctx.bezierCurveTo(x + w * 0.33, yy + a, x + w * 0.66, yy + b, x + w, yy);
+    ctx.stroke();
+  }
+}
+
+function canvasTexture(w, h, draw) {
+  const cv = document.createElement('canvas');
+  cv.width = w;
+  cv.height = h;
+  draw(cv.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return t;
+}
+
+const oakTexture = canvasTexture(1024, 512, (g, w, h) => grain(g, 0, 0, w, h, '#b8925f', 7, 1.25));
+
+const PLANK_W = 2.4, PLANK_H = 1.52;   // 8 radov po 19 cm, dosky 120 cm so znakom väzby
+const floorTexture = canvasTexture(2048, 1024, (g, w, h) => {
+  const rows = 8, rowH = h / rows, tones = ['#d6bf9f', '#d1b998', '#dac4a5', '#cfb695', '#d4bc9c'];
+  const r = rng(21);
+  for (let row = 0; row < rows; row++) {
+    const y = row * rowH, off = row % 2 ? w / 4 : 0;
+    for (let k = -1; k < 2; k++) {
+      const x = off + k * (w / 2);
+      grain(g, x, y, w / 2, rowH, tones[Math.floor(r() * tones.length)], 100 + row * 7 + k, 0.8);
+      g.fillStyle = 'rgba(70,52,34,.4)';
+      g.fillRect(x, y, 2, rowH);
+    }
+    g.fillStyle = 'rgba(70,52,34,.4)';
+    g.fillRect(0, y, w, 2);
+  }
+});
+
+const COLORS = {
+  'Kašmír bouclé': 0xcbbca8,
+  'Posteľná bielizeň': 0xe9e3d8,
+  'Vankúše': 0xf2eee6,
+};
+
+function boxProjectUV(mesh, uScale, vScale) {
+  const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
+  mesh.geometry = g;
+  mesh.updateWorldMatrix(true, false);
+  const pos = g.attributes.position, nor = g.attributes.normal;
+  const uv = new Float32Array(pos.count * 2);
+  const p = new THREE.Vector3(), n = new THREE.Vector3();
+  const nm = new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld);
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+    n.fromBufferAttribute(nor, i).applyMatrix3(nm);
+    const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+    let u, v;
+    if (ay >= ax && ay >= az) { u = p.x; v = p.z; }       // vodorovné plochy: vlákna pozdĺž x
+    else if (az >= ax) { u = p.x; v = p.y; }              // predné plochy: vlákna pozdĺž x
+    else { u = p.y; v = p.z; }                            // bočné plochy: vlákna zvisle
+    uv[i * 2] = u / uScale;
+    uv[i * 2 + 1] = v / vScale;
+  }
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+}
+
+let roofParts = [], needsRender = true, active = null;
+const roofBtn = document.getElementById('roof');
+const bar = document.getElementById('bar');
+const status = document.getElementById('status');
+const hint = document.getElementById('hint');
+
+function setRoof(on) {
+  roofParts.forEach(o => { o.visible = on; });
+  roofBtn.textContent = on ? 'Strecha: zap.' : 'Strecha: vyp.';
+  roofBtn.classList.toggle('on', on);
+  roofBtn.setAttribute('aria-pressed', String(on));
+  renderer.shadowMap.needsUpdate = true;
+  needsRender = true;
+}
+
+function fit(view) {
+  const portrait = camera.aspect < 1;
+  camera.fov = view.outside ? (portrait ? 50 : 34) : (portrait ? 88 : 62);
+  camera.updateProjectionMatrix();
+  const pos = fromPlan(view.pos), look = fromPlan(view.look);
+  if (view.outside) {
+    const vFov = THREE.MathUtils.degToRad(camera.fov);
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+    const dist = 3.7 / Math.sin(Math.min(vFov, hFov) / 2);
+    const dir = pos.clone().sub(look).normalize();
+    camera.position.copy(look).addScaledVector(dir, dist);
+    controls.target.copy(look);
+    controls.maxPolarAngle = Math.PI * 0.49;
+  } else {
+    // Vnútri sa cieľ drží blízko pri kamere, takže otáčanie je ako rozhliadanie sa na mieste.
+    const dir = look.clone().sub(pos).normalize();
+    camera.position.copy(pos);
+    controls.target.copy(pos).addScaledVector(dir, 0.6);
+    controls.maxPolarAngle = Math.PI * 0.97;
+  }
+  controls.update();
+  needsRender = true;
+}
+
+function go(id) {
+  const view = VIEWS.find(v => v.id === id);
+  active = view;
+  [...bar.children].forEach(b => b.classList.toggle('on', b.dataset.id === id));
+  setRoof(view.roof);
+  fit(view);
+}
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  if (active) {
+    camera.fov = active.outside ? (camera.aspect < 1 ? 50 : 34) : (camera.aspect < 1 ? 88 : 62);
+  }
+  camera.updateProjectionMatrix();
+  needsRender = true;
+}
+
+VIEWS.forEach(v => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = v.name;
+  b.dataset.id = v.id;
+  b.addEventListener('click', () => go(v.id));
+  bar.append(b);
+});
+roofBtn.addEventListener('click', () => setRoof(!roofParts[0].visible));
+controls.addEventListener('change', () => { needsRender = true; });
+window.addEventListener('resize', resize);
+resize();
+
+new GLTFLoader().load('garsonka.glb', gltf => {
+  const model = gltf.scene;
+  model.updateMatrixWorld(true);
+  const seen = {};
+  model.traverse(o => {
+    if (!o.isMesh) return;
+    const group = o.userData.skupina || (o.parent && o.parent.userData.skupina);
+    if (group === ROOF_GROUP) roofParts.push(o);
+    o.castShadow = true;
+    o.receiveShadow = true;
+    const m = o.material, name = m.name;
+    seen[name] = (seen[name] || 0) + 1;
+    m.side = THREE.DoubleSide;
+    if (name === 'Dub') {
+      boxProjectUV(o, 1.2, 0.6);
+      m.map = oakTexture;
+      m.color.set(0xffffff);
+      m.roughness = 0.5;
+    } else if (name === 'Podlaha dub') {
+      boxProjectUV(o, PLANK_W, PLANK_H);
+      m.map = floorTexture;
+      m.color.set(0xffffff);
+      m.roughness = 0.45;
+    } else if (COLORS[name] !== undefined) {
+      m.color.set(COLORS[name]);
+      m.roughness = 0.95;
+    } else if (name === 'Nerez') {
+      m.metalness = 0.15;
+      m.roughness = 0.4;
+      m.color.set(0xc8cbcd);
+    } else if (name === 'Vzpera oceľ' || name === 'Úchytky') {
+      m.metalness = 0.2;
+      m.roughness = 0.5;
+    } else if (name === 'Sklo') {
+      m.transparent = true;
+      m.opacity = 0.18;
+      m.color.set(0xcfe2f5);
+      m.roughness = 0.05;
+      m.depthWrite = false;
+      o.castShadow = false;
+    }
+    m.needsUpdate = true;
+  });
+  scene.add(model);
+  status.remove();
+  window.viewer = { go, setRoof, roofCount: roofParts.length, materials: seen, renderer, get drawCalls() { return renderer.info.render.calls; } };
+  go('dom');
+}, undefined, err => {
+  status.textContent = 'Model sa nepodarilo načítať. Skontroluj pripojenie a obnov stránku.';
+  console.error(err);
+});
+
+// Damping potrebuje update stále, kreslí sa len pri zmene, aby sa šetrila batéria.
+renderer.domElement.addEventListener('pointerdown', () => { hint.style.display = 'none'; }, { once: true });
+const ahead = new THREE.Vector3();
+renderer.setAnimationLoop(() => {
+  if (active && !active.outside && camera.position.distanceTo(controls.target) < 0.25) {
+    controls.target.add(ahead.subVectors(controls.target, camera.position).normalize().multiplyScalar(0.5));
+  }
+  controls.update();
+  if (needsRender) {
+    renderer.render(scene, camera);
+    needsRender = false;
+  }
+});
+</script>
+</body>
+</html>
