@@ -185,7 +185,7 @@ function fit(view) {
   if (view.outside) {
     const vFov = THREE.MathUtils.degToRad(camera.fov);
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
-    const dist = 3.7 / Math.sin(Math.min(vFov, hFov) / 2);
+    const dist = 4.15 / Math.sin(Math.min(vFov, hFov) / 2);
     const dir = pos.clone().sub(look).normalize();
     camera.position.copy(look).addScaledVector(dir, dist);
     controls.target.copy(look);
