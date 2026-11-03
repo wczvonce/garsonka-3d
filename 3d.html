@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#e4e8ec">
+<title>Garsónka 3D model</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #e4e8ec; font: 15px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #1d2329; }
+  canvas { position: fixed; inset: 0; display: block; touch-action: none; }
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 10px calc(10px + env(safe-area-inset-bottom)); display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; background: linear-gradient(transparent, rgba(228,232,236,.92) 35%); }
+  #bar::-webkit-scrollbar { display: none; }
+  a.btn { flex: none; display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; box-sizing: border-box; border: 1px solid #c3cbd2; border-radius: 22px; background: #fff; color: inherit; font-weight: 500; text-decoration: none; }
+  button { flex: none; min-height: 44px; padding: 0 14px; border: 1px solid #c3cbd2; border-radius: 22px; background: #fff; color: inherit; font: inherit; font-weight: 500; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  button.on { background: #1d2329; border-color: #1d2329; color: #fff; }
+  #roof { position: fixed; top: calc(10px + env(safe-area-inset-top)); right: 10px; }
+  #hint { position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 10px; right: 130px; font-size: 13px; color: #4b5560; text-shadow: 0 0 6px rgba(255,255,255,.9); pointer-events: none; }
+  #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="status">Načítavam model…</div>
+<div id="hint">Jeden prst otáča, dva približujú a posúvajú. Na šírku vidíš viac.</div>
+<button id="roof" type="button" aria-pressed="false">Strecha: vyp.</button>
+<nav id="bar" aria-label="Pohľady"></nav>
+
+<script type="importmap">
+{ "imports": { "three": "./lib/three/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from './lib/three/examples/jsm/controls/OrbitControls.js';
+import { GLTFLoader } from './lib/three/examples/jsm/loaders/GLTFLoader.js';
+import { mergeGeometries } from './lib/three/examples/jsm/utils/BufferGeometryUtils.js';
+
+const ROOF_GROUP = 'Strop a strecha';
+const MODEL_VERSION = '2026-11-03';
+const CENTER = [2.895, 2.75, 0.6];
+
+// Model má súradnice z výkresu v metroch: x od ľavej steny, y od nízkej steny, z od podlahy.
+const fromPlan = ([x, y, z]) => new THREE.Vector3(x, z, -y);
+
+const VIEWS = [
+  { id: 'dom',   name: 'Domček',    pos: [7.8, -3.9, 7.4],   look: [2.85, 2.45, 0.35], roof: false, outside: true },
+  { id: 'top',   name: 'Zhora',     pos: [2.895, 2.74, 9],   look: [2.895, 2.75, 0],   roof: false, outside: true },
+  { id: 'kuch',  name: 'Kuchyňa',   pos: [2.47, 1.42, 1.28], look: [4.45, 3.40, 1.00], roof: true },
+  { id: 'obyv',  name: 'Obývačka',  pos: [3.05, 3.12, 1.42], look: [3.34, 2.22, 1.10], roof: true },
+  { id: 'gauc',  name: 'Z gauča',   pos: [5.10, 1.60, 1.08], look: [2.33, 2.05, 1.05], roof: true },
+  { id: 'vstup', name: 'Od vstupu', pos: [1.05, 5.20, 1.55], look: [3.60, 1.20, 0.80], roof: true },
+];
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 0.92;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false;
+document.body.prepend(renderer.domElement);
+
+const SKY = new THREE.Color(0xb9d4f2), STUDIO = new THREE.Color(0xe4e8ec);
+const scene = new THREE.Scene();
+scene.background = STUDIO;
+
+const camera = new THREE.PerspectiveCamera(60, 1, 0.02, 80);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.09;
+controls.minDistance = 0.1;
+controls.maxDistance = 30;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xe6dccd, 3.1));
+const sun = new THREE.DirectionalLight(0xfff3e3, 1.3);
+const sunDir = new THREE.Vector3(-0.34, -0.60, -0.72).normalize();  // smer svetla v súradniciach webu
+const c = fromPlan(CENTER);
+sun.position.copy(c).addScaledVector(sunDir, -12);
+sun.target.position.copy(c);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -7, right: 7, top: 7, bottom: -7, near: 1, far: 26 });
+sun.shadow.bias = -0.0006;
+sun.shadow.normalBias = 0.02;
+scene.add(sun, sun.target);
+
+// Procedurálne materiály z Blendera sa do GLB neprenesú, textúry sa kreslia tu.
+function rng(seed) {
+  return () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+}
+
+function canvasTexture(w, h, draw) {
+  const cv = document.createElement('canvas');
+  cv.width = w;
+  cv.height = h;
+  draw(cv.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return t;
+}
+
+const oakTexture = canvasTexture(1024, 512, (g, w, h) => {
+  const r = rng(7);
+  g.fillStyle = '#c2a684';
+  g.fillRect(0, 0, w, h);
+  for (let i = 0; i < h * 0.9; i++) {
+    const y = r() * h, dark = r() < 0.55;
+    g.strokeStyle = dark ? `rgba(95,68,40,${0.03 + r() * 0.11})` : `rgba(255,243,222,${0.02 + r() * 0.09})`;
+    g.lineWidth = 0.5 + r() * 1.7;
+    g.beginPath();
+    g.moveTo(0, y);
+    const a = (r() - 0.5) * 3, b = (r() - 0.5) * 3;
+    g.bezierCurveTo(w * 0.33, y + a, w * 0.66, y + b, w, y);
+    g.stroke();
+  }
+});
+
+const terrazzoTexture = canvasTexture(1024, 1024, (g, w, h) => {
+  const r = rng(31), colors = ['#b98b62', '#8f8778', '#d9c4a5', '#6f5d4c', '#a9734a', '#c9b9a2'];
+  g.fillStyle = '#e8dfd0';
+  g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 1500; i++) {
+    const x = r() * w, y = r() * h, s = i < 260 ? 6 + r() * 12 : 2 + r() * 5;
+    g.fillStyle = colors[Math.floor(r() * colors.length)];
+    g.beginPath();
+    const n = 5 + Math.floor(r() * 3), rot = r() * 6.28;
+    for (let k = 0; k < n; k++) {
+      const a = rot + k / n * 6.283, q = s * (0.65 + r() * 0.5);
+      g[k ? 'lineTo' : 'moveTo'](x + Math.cos(a) * q, y + Math.sin(a) * q);
+    }
+    g.closePath();
+    g.fill();
+  }
+});
+
+const rugTexture = canvasTexture(1024, 1024, (g, w, h) => {
+  const r = rng(5);
+  g.fillStyle = '#e3d9c8';
+  g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 34; i++) {
+    const base = (i + 0.5) * h / 34, ph = r() * 6.28, amp = 7 + r() * 7;
+    g.strokeStyle = 'rgba(165,148,122,.6)';
+    g.lineWidth = 2.4;
+    g.beginPath();
+    for (let x = 0; x <= w; x += 8) {
+      const y = base + Math.sin(x / 95 + ph) * amp + Math.sin(x / 41 + ph * 2) * 2.5;
+      g[x ? 'lineTo' : 'moveTo'](x, y);
+    }
+    g.stroke();
+  }
+});
+
+const boucleTexture = canvasTexture(1024, 1024, (g, w, h) => {
+  const r = rng(53);
+  g.fillStyle = '#d9d9d9';
+  g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 9000; i++) {
+    const shade = 150 + Math.floor(r() * 105);
+    g.fillStyle = `rgb(${shade},${shade},${shade})`;
+    g.beginPath();
+    g.arc(r() * w, r() * h, 3 + r() * 6, 0, 6.283);
+    g.fill();
+  }
+});
+
+const SURFACES = {
+  'Podlaha svetlosivá': { color: 0xcbc6bd, roughness: 0.42 },
+  'Posteľná bielizeň': { color: 0xeee9df, roughness: 0.95 },
+  'Čierny kov': { color: 0x1a1b1e, metalness: 0.2, roughness: 0.45 },
+  'Nerez': { color: 0xc8cbcd, metalness: 0.15, roughness: 0.4 },
+  'Mosadz': { color: 0xb8945c, metalness: 0.2, roughness: 0.4 },
+  'Zrkadlo': { color: 0xc9d2d8, metalness: 0.1, roughness: 0.1 },
+  'LED pásik': { color: 0xffffff, emissive: 0xffc98c, emissiveIntensity: 1.6 },
+  'Bodovka': { color: 0xffffff, emissive: 0xffdfae, emissiveIntensity: 2.2 },
+};
+const TEXTURED = {
+  'Dub': { map: oakTexture, u: 1.2, v: 0.6, roughness: 0.5 },
+  'Dub zvislý': { map: oakTexture, u: 1.2, v: 0.6, roughness: 0.5, upright: true },
+  'Terazzo': { map: terrazzoTexture, u: 0.6, v: 0.6, roughness: 0.28 },
+  'Koberec vlnky': { map: rugTexture, u: 1.7, v: 1.7, roughness: 1 },
+  'Gauč bouclé': { map: boucleTexture, u: 0.42, v: 0.42, roughness: 1, color: 0xefe5d4, bump: 1.4 },
+  'Stolička karamel': { map: boucleTexture, u: 0.3, v: 0.3, roughness: 1, color: 0xc08d5e, bump: 1.6 },
+};
+
+function worldGeometry(mesh, tex) {
+  let g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+  g.applyMatrix4(mesh.matrixWorld);
+  for (const name of Object.keys(g.attributes)) {
+    if (name !== 'position' && name !== 'normal') g.deleteAttribute(name);
+  }
+  if (tex) {
+    const pos = g.attributes.position, nor = g.attributes.normal;
+    const uv = new Float32Array(pos.count * 2);
+    for (let i = 0; i < pos.count; i++) {
+      const ax = Math.abs(nor.getX(i)), ay = Math.abs(nor.getY(i)), az = Math.abs(nor.getZ(i));
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      let u, v;
+      if (ay >= ax && ay >= az) { u = x; v = z; }                       // vodorovné plochy
+      else if (az >= ax) { u = tex.upright ? y : x; v = tex.upright ? x : y; }  // plochy spredu
+      else { u = y; v = z; }                                            // bočné plochy: vlákna zvisle
+      uv[i * 2] = u / tex.u;
+      uv[i * 2 + 1] = v / tex.v;
+    }
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  }
+  return g;
+}
+
+let roofParts = [], needsRender = true, active = null;
+const roofBtn = document.getElementById('roof');
+const bar = document.getElementById('bar');
+const status = document.getElementById('status');
+const hint = document.getElementById('hint');
+
+function setRoof(on) {
+  roofParts.forEach(o => { o.visible = on; });
+  scene.background = on ? SKY : STUDIO;
+  roofBtn.textContent = on ? 'Strecha: zap.' : 'Strecha: vyp.';
+  roofBtn.classList.toggle('on', on);
+  roofBtn.setAttribute('aria-pressed', String(on));
+  renderer.shadowMap.needsUpdate = true;
+  needsRender = true;
+}
+
+function fovFor(view, aspect) {
+  return view.outside ? (aspect < 1 ? 50 : 34) : (aspect < 1 ? 88 : 62);
+}
+
+function fit(view) {
+  camera.fov = fovFor(view, camera.aspect);
+  camera.updateProjectionMatrix();
+  const pos = fromPlan(view.pos), look = fromPlan(view.look);
+  if (view.outside) {
+    const vFov = THREE.MathUtils.degToRad(camera.fov);
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+    const dist = 4.15 / Math.sin(Math.min(vFov, hFov) / 2);
+    const dir = pos.clone().sub(look).normalize();
+    camera.position.copy(look).addScaledVector(dir, dist);
+    controls.target.copy(look);
+    controls.maxPolarAngle = Math.PI * 0.49;
+  } else {
+    // Vnútri sa cieľ drží blízko pri kamere, takže otáčanie je ako rozhliadanie sa na mieste.
+    const dir = look.clone().sub(pos).normalize();
+    camera.position.copy(pos);
+    controls.target.copy(pos).addScaledVector(dir, 0.6);
+    controls.maxPolarAngle = Math.PI * 0.97;
+  }
+  controls.update();
+  needsRender = true;
+}
+
+function go(id) {
+  const view = VIEWS.find(v => v.id === id);
+  active = view;
+  [...bar.children].forEach(b => b.classList.toggle('on', b.dataset.id === id));
+  setRoof(view.roof);
+  fit(view);
+}
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  // Otočenie telefónu nemení miesto, kde práve stojíš.
+  if (active) camera.fov = fovFor(active, camera.aspect);
+  camera.updateProjectionMatrix();
+  needsRender = true;
+}
+
+VIEWS.forEach(v => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = v.name;
+  b.dataset.id = v.id;
+  b.addEventListener('click', () => go(v.id));
+  bar.append(b);
+});
+const linkPano = document.createElement('a');
+linkPano.className = 'btn';
+linkPano.href = './';
+linkPano.textContent = '360° fotky';
+bar.append(linkPano);
+roofBtn.addEventListener('click', () => setRoof(!roofParts[0].visible));
+controls.addEventListener('change', () => { needsRender = true; });
+window.addEventListener('resize', resize);
+resize();
+
+new GLTFLoader().load(`garsonka.glb?v=${MODEL_VERSION}`, gltf => {
+  const source = gltf.scene;
+  source.updateMatrixWorld(true);
+  // Zlúčenie podľa materiálu: stovky dielov by na telefóne znamenali stovky kreslení za snímku.
+  const groups = new Map();
+  let parts = 0;
+  source.traverse(o => {
+    if (!o.isMesh) return;
+    parts++;
+    const roof = (o.userData.skupina || (o.parent && o.parent.userData.skupina)) === ROOF_GROUP;
+    const key = `${o.material.name}|${roof}`;
+    if (!groups.has(key)) groups.set(key, { material: o.material, roof, geoms: [] });
+    groups.get(key).geoms.push(worldGeometry(o, TEXTURED[o.material.name]));
+  });
+  const merged = new THREE.Group();
+  for (const { material: m, roof, geoms } of groups.values()) {
+    const name = m.name, s = SURFACES[name], t = TEXTURED[name];
+    m.side = THREE.DoubleSide;
+    if (s) {
+      m.color.set(s.color);
+      if (s.roughness !== undefined) m.roughness = s.roughness;
+      if (s.metalness !== undefined) m.metalness = s.metalness;
+      if (s.emissive !== undefined) {
+        m.emissive.set(s.emissive);
+        m.emissiveIntensity = s.emissiveIntensity;
+      }
+    } else if (t) {
+      m.map = t.map;
+      m.color.set(t.color ?? 0xffffff);
+      m.roughness = t.roughness;
+      m.metalness = 0;
+      if (t.bump) {
+        m.bumpMap = t.map;
+        m.bumpScale = t.bump;
+      }
+    }
+    const mesh = new THREE.Mesh(mergeGeometries(geoms), m);
+    mesh.name = name;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    if (name === 'Sklo') {
+      m.transparent = true;
+      m.opacity = 0.12;
+      m.color.set(0xdcecfb);
+      m.roughness = 0.05;
+      m.metalness = 0;
+      m.depthWrite = false;
+      mesh.castShadow = false;
+    }
+    m.needsUpdate = true;
+    if (roof) roofParts.push(mesh);
+    merged.add(mesh);
+  }
+  scene.add(merged);
+  status.remove();
+  window.viewer = { go, setRoof, parts, drawGroups: groups.size, roofMeshes: roofParts.length, materials: [...groups.keys()], renderer };
+  go('dom');
+}, undefined, err => {
+  status.textContent = 'Model sa nepodarilo načítať. Skontroluj pripojenie a obnov stránku.';
+  console.error(err);
+});
+
+// Damping potrebuje update stále, kreslí sa len pri zmene, aby sa šetrila batéria.
+renderer.domElement.addEventListener('pointerdown', () => { hint.style.display = 'none'; }, { once: true });
+const ahead = new THREE.Vector3();
+renderer.setAnimationLoop(() => {
+  // Približovanie v izbe je chôdza dopredu: cieľ sa posúva pred kameru.
+  if (active && !active.outside && camera.position.distanceTo(controls.target) < 0.25) {
+    controls.target.add(ahead.subVectors(controls.target, camera.position).normalize().multiplyScalar(0.5));
+  }
+  controls.update();
+  if (needsRender) {
+    renderer.render(scene, camera);
+    needsRender = false;
+  }
+});
+</script>
+</body>
+</html>
